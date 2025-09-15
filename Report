@@ -1,0 +1,212 @@
+🍲 Food Detector App — Consolidated Project Report (Activities & Decisions)
+⸻
+1) Goal & Scope
+	•	Build an end-to-end Food image classifier with a browser UI.
+	•	Core flows: Data Analysis → Model Training → Evaluation → Predictions.
+	•	UX goals: simple upload/predict, transparent metrics, feedback capture, and a clean, modern interface.
+⸻
+2) Data & Preparation
+	•	Dataset: Custom “Food Classification dataset” organized by class folders.
+	•	Splits: Stratified 80/10/10 (train/val/test) using two-stage train_test_split to preserve class balance.
+	•	Persistent split: Saved to train_val_test_split.npz (paths + integer labels).
+	•	Per-split mirroring: Copied images into TRAIN_DIR, VAL_DIR, TEST_DIR folder trees by class for easy inspection.
+	•	Class labels: Stored in class_labels.json as an ordered list; used consistently across training, evaluation, and app.
+Summaries & reporting
+	•	Each split directory has a summary file (e.g., train_summary.txt) with:
+	•	Creation timestamp
+	•	Per-class image counts
+	•	Total image count (fixed an early “double counting” bug)
+	•	UI reads training summary (created_at, num_classes, total_images, class_counts) from train_summary.txt + class_labels.json.
+⸻
+3) Data Loading & Preprocessing
+	•	Introduced Image_Sequence.py with:
+	•	ImageSequence (Keras Sequence) for robust, batched loading.
+	•	preprocess_image(img, target_size, augment=False) for consistent resizing → efficientnet_v2.preprocess_input.
+	•	Optional deterministic augmentation during training only.
+	•	Key decision: Use preprocess_image everywhere (training, evaluation, app).
+	•	Fixed critical bug where manual preprocessing caused single-class collapse at inference.
+
+Performance upgrades (new):
+	•	Shuffling added: ds.shuffle(8192) ensures better randomness.
+	•	AUTOTUNE + prefetching: num_parallel_calls=tf.data.AUTOTUNE, prefetch(AUTOTUNE) → speeds up pipeline.
+	•	Non-deterministic execution: opts.experimental_deterministic=False for extra throughput.
+
+⸻
+4) Model Architecture & Training Strategy
+	•	Backbone: EfficientNetV2 (classification head adapted to number of classes).
+	•	Loss: categorical_crossentropy; Optimizer: Adam (LR ~1e-4 initially).
+	•	Class weights: Supported for imbalance.
+
+Callbacks
+	•	ModelCheckpoint (best val metric)
+	•	EarlyStopping
+	•	ReduceLROnPlateau
+	•	EpochTimeLogger (custom; logs epoch duration, sends Telegram updates with ETA, accuracy, loss).
+
+History tracking
+	•	Encouraged saving history.history to JSON/CSV → UI charts (accuracy/loss per epoch).
+	•	Telegram messages extended to include per-epoch metrics.
+
+Training time insights (new)
+	•	Stage 1 (frozen base): ~20 min for 2 epochs on Apple M2.
+	•	Stage 2 (fine-tune): ~1h40m for 2 epochs.
+	•	Added live ETA per epoch in console + Telegram.
+	•	Projected: 15–20 epochs could take ~10–15 hours depending on hardware.
+
+⸻
+5) Evaluation Pipeline
+	•	Generators: ImageSequence for val/test; no augmentation during inference.
+	•	Metrics:
+	•	Overall accuracy
+	•	Classification report (precision/recall/F1 per class)
+	•	Confusion matrix (PNG saved)
+	•	Detailed CSV: image_path, true_label, predicted_label, correctness, top-3 confidences
+
+Bulk prediction metrics (new):
+	•	Extracted from testdata_inference_report.txt:
+	•	✅ Accuracy
+	•	✅ Precision (weighted)
+	•	✅ Recall (weighted)
+	•	✅ F1-score (weighted)
+	•	Displayed in UI card below Final Metrics Summary.
+
+Debug tools
+	•	Class index alignment check (class_labels.json vs. model output shape).
+	•	“First N images” smoke test for sanity checks.
+
+Extra artifacts (planned):
+	•	Misclassification examples with top-k confusion.
+	•	Per-class accuracy tables for interpretability.
+
+⸻
+6) Notifications (Telegram)
+	•	send_telegram.py integration sends:
+	•	Per-epoch metrics + ETA
+	•	Training/val loss & accuracy
+	•	Evaluation summary + accuracy
+	•	Predicted class distribution
+	•	Lightweight reports (no large uploads).
+
+⸻
+7) Flask Application (Backend)
+	•	Endpoints:
+	•	/ → Predictions (upload multiple files, batch inference, top-k results)
+	•	/feedback → Saves user-selected correct label images for retraining
+	•	Inference:
+	•	All inputs run through preprocess_image (consistent with training).
+	•	Batch size = 1 (low latency).
+	•	Returns class scores + top-k.
+	•	Fixes:
+	•	Shape mismatch resolved (resize + expand_dims order).
+	•	Augmentations disabled at inference.
+
+Logging & monitoring (new):
+	•	Captures image name, prediction time per request (ms).
+	•	Logs low-confidence predictions flagged below threshold.
+	•	Error handling with safe fallbacks.
+
+⸻
+8) Frontend (UI/UX)
+	•	Structure: Jinja layout (base.html + per-page blocks).
+	•	Navigation Tabs:
+	1.	Data Analysis → stats, splits, charts
+	2.	Model Training → config, per-epoch charts, checkpoints, training summary
+	3.	Evaluation → metrics, confusion matrix, downloadable CSV
+	4.	Predictions → upload, results, feedback
+
+Enhancements (new)
+	•	Right-side Model Summary & Parameter Summary cards added alongside Training Summary.
+	•	Scrollable model summary card with larger width/height (fixed truncation issue).
+	•	Stats panel improvements:
+	•	Images tested (session)
+	•	Incorrect count
+	•	Confidence threshold
+
+Future polish:
+	•	Responsive design for mobile.
+	•	Pagination/gallery view for large uploads.
+	•	Highlighting low-confidence predictions with orange warning indicators.
+
+⸻
+9) File/Directory Layout (Current)
+
+Food_Detector_App/
+├── app.py
+├── Model_data/
+│   ├── Food detector model.keras
+│   ├── logs/
+│   │   ├── class_labels.json
+│   │   └── training_log.csv
+│   ├── Reports/
+│   │   ├── model_summary.txt
+│   │   └── model_param_summary.json
+│   ├── Checkpoints/
+│   └── train_val_test_split.npz
+├── Food images Training set/
+│   └── train_summary.txt
+├── Food images Validation set/
+├── Food images Test set/
+├── Predictions/
+│   └── testdata_inference_report.txt
+├── Feedback dataset/
+├── templates/
+│   ├── base.html
+│   ├── model_training.html
+│   ├── evaluation.html
+│   └── index.html
+└── static/
+    ├── css/styles.css
+    ├── js/app.js
+    └── images/
+
+⸻
+10) Debugging Highlights & Fixes
+	•	❌ Single-class prediction issue → Fixed via consistent preprocessing.
+	•	❌ Shape mismatch errors → Fixed image resize/expand order.
+	•	❌ Double counting bug in summaries → Fixed parser.
+	•	❌ Workers param in .fit() → Deprecated in TF 2.17; removed.
+	•	✅ Epoch time logging & ETA now integrated.
+	•	✅ UI card layout fixes → wider, scrollable model summary.
+
+⸻
+11) Deployment Planning
+	•	Target: Render (Flask deploy with Procfile + requirements).
+	•	Alternatives: Railway, Hugging Face Spaces, Fly.io.
+	•	Constraints: model size, memory, cold starts.
+
+Security considerations (new):
+	•	Validate file uploads (only images).
+	•	Temporary storage only; images deleted after prediction.
+	•	No personal data retained.
+
+⸻
+12) Performance & Dev Environment
+	•	Running on Apple M2 MacBook.
+	•	Using tensorflow-macos + tensorflow-metal acceleration.
+	•	Batch size = 16 (balanced speed/memory).
+	•	Training durations monitored; Stage 2 epochs are much longer than Stage 1.
+	•	Shuffle + AUTOTUNE improved throughput.
+
+⸻
+13) Planned Enhancements (Backlog)
+	•	Complete landing page (hero, CTA).
+	•	Charts: Accuracy/Loss over epochs (Chart.js or static).
+	•	Export confusion matrix + CSV download.
+	•	Feedback retraining pipeline.
+	•	Model versioning & metadata in UI.
+	•	Public demo deployment.
+	•	CI/CD with automated tests (planned).
+	•	Drift detection to monitor post-deployment accuracy.
+
+⸻
+14) Key Takeaways
+	•	Consistency of preprocessing is the #1 priority.
+	•	Artifact persistence (splits, labels, summaries) keeps everything aligned.
+	•	Epoch logging + ETA improves training monitoring.
+	•	UI transparency builds trust (bulk metrics, training stats, scrollable panels).
+	•	Performance trade-offs: shuffle/autotune → faster, but less reproducible.
+	•	Security, monitoring, and retraining pipelines will be critical for scaling.
+
+⸻
+
+✅ That’s the enriched master report including security, logging, retraining pipeline planning, UI polish, and monitoring.
